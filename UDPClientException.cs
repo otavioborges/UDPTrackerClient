@@ -9,7 +9,7 @@ namespace UDPTracker
     public enum UDPClientError
     {
         BadPort, BadServer, RequestTimeout, ResponseTimeout, ConnectionClosed, SocketError, Unknown,
-        BadInfoHash, BadPeerID
+        BadInfoHash, BadPeerID, BadTransactionID, BadRequest, BadResponse
     }
 
     public class UDPClientException : Exception

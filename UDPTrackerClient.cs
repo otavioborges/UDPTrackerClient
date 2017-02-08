@@ -29,6 +29,7 @@ namespace UDPTracker
 
     public class UDPTrackerClient : IDisposable
     {
+        private readonly int MAX_RESPONSE_SIZE = 6553500;
         private readonly long MAGIC_NUMBER = 0x41727101980;
         private readonly int MAX_RETRIES = 3;
         private readonly int[] EXPECTED_TIMEOUT = { 15000, 30000, 60000, 120000, 240000, 480000, 960000, 1920000, 3840000 };
@@ -105,7 +106,7 @@ namespace UDPTracker
             }
         }
 
-        public bool Connect()
+        public void Connect()
         {
             try
             {
@@ -125,18 +126,16 @@ namespace UDPTracker
 
             byte[] response = Transmit(request.ToArray(), 16);
             if (response == null) // no response from request
-                return false;
+                throw new UDPClientException("No response from server on connect command", null, UDPClientError.BadServer, m_server, m_port);
 
             int recvTransaction = BitConverter.ToInt32(response, 4);
 
             if (sendTransaction != recvTransaction)
-                return false;
+                throw new UDPClientException("Bad transaction_id received from server", null, UDPClientError.BadTransactionID, m_server, m_port);
 
             m_connectionID = BitConverter.ToInt64(response, 8);
             m_connectionTime = DateTime.Now;
             m_connected = true;
-
-            return true;
         }
 
         public List<IPEndPoint> Announce(byte[] infoHash, byte[] peerID)
@@ -144,7 +143,7 @@ namespace UDPTracker
             List<IPEndPoint> peers = new List<IPEndPoint>();
 
             if (!m_connected)
-                return peers; // clean list, we're not connected to tracker
+                throw new UDPClientException("Trying Announce on disconnected API", null, UDPClientError.ConnectionClosed, m_server, m_port);
 
             if (infoHash.Length != 20)
                 throw new UDPClientException("Invalid torrent info hash", UDPClientError.BadInfoHash);
@@ -155,8 +154,14 @@ namespace UDPTracker
             if((DateTime.Now - m_connectionTime).TotalSeconds > 107)
             {
                 // connectionID probably expired, reconnect
-                if (!Connect())
-                    return peers; // not able to connect, return empty list
+                try
+                {
+                    Connect();
+                }
+                catch(UDPClientException ex)
+                {
+                    throw ex;
+                }
             }
 
             int sendTransaction = NextTransactionID();
@@ -178,20 +183,27 @@ namespace UDPTracker
             Append(50, ref request, true);                     // num_want (-1 for default)
             Append((short)15000, ref request, false);           // client listening port
 
-            byte[] responseHeader = Transmit(request.ToArray(), 131070);
+            byte[] response = Transmit(request.ToArray(), MAX_RESPONSE_SIZE);
 
-            if (responseHeader == null) // no response from tracker
-                return peers;
+            if (response == null) // no response from tracker
+                throw new UDPClientException("No response from server to Announce request", null, UDPClientError.ResponseTimeout, m_server, m_port);
 
             // catch the remaining EndPoints
-            int seeders = BitConverter.ToInt32(ReverseChunk(responseHeader,16,4), 0);
+            int totalPeers = BitConverter.ToInt32(ReverseChunk(response, 12, 4), 0); // add leechers
+            totalPeers += BitConverter.ToInt32(ReverseChunk(response,16,4), 0); // add seeders
 
             byte[] endPoint = new byte[6]; // IP and port
             byte[] seedIP = new byte[4];
             int seedPort = -1;
-            for(int seed = 0; seed < seeders; seed++)
+
+            int totalDesiredSize = 20 + (6 * (totalPeers));
+            if (response.Length < totalDesiredSize)
+                throw new UDPClientException("Wrong response size, missing chunks", null, UDPClientError.BadResponse, m_server, m_port);
+
+            // Add all peers to list
+            for(int seed = 0; seed < totalPeers; seed++)
             {
-                Array.Copy(responseHeader, 20 + (6 * seed), endPoint, 0, 6);
+                Array.Copy(response, 20 + (6 * seed), endPoint, 0, 6);
 
                 Array.Copy(endPoint, 0, seedIP, 0, 4);
                 seedPort = (int)BitConverter.ToUInt16(ReverseChunk(endPoint, 4, 2), 0);
@@ -206,7 +218,7 @@ namespace UDPTracker
             int peers = -1;
 
             if (!m_connected)
-                return peers; // clean list, we're not connected to tracker
+                throw new UDPClientException("Trying Announce on disconnected API", null, UDPClientError.ConnectionClosed, m_server, m_port);
 
             if (infoHash.Length != 20)
                 throw new UDPClientException("Invalid torrent info hash", UDPClientError.BadInfoHash);
@@ -215,8 +227,14 @@ namespace UDPTracker
             if ((DateTime.Now - m_connectionTime).TotalSeconds > 107)
             {
                 // connectionID probably expired, reconnect
-                if (!Connect())
-                    return peers; // not able to connect, return empty list
+                try
+                {
+                    Connect();
+                }
+                catch (UDPClientException ex)
+                {
+                    throw ex;
+                }
             }
 
             int sendTransaction = NextTransactionID();
@@ -229,11 +247,11 @@ namespace UDPTracker
 
             byte[] response = Transmit(request.ToArray(), 20);
             if (response == null) // no response from tracker
-                return peers;
+                throw new UDPClientException("No response from server to Announce request", null, UDPClientError.ResponseTimeout, m_server, m_port);
 
             int recvTransaction = BitConverter.ToInt32(response, 4);
             if (sendTransaction != recvTransaction)
-                return peers;
+                throw new UDPClientException("Bad transaction_id received from server", null, UDPClientError.BadTransactionID, m_server, m_port);
 
             // catch the remaining EndPoints
             peers = BitConverter.ToInt32(ReverseChunk(response,8,4), 0);
@@ -242,13 +260,6 @@ namespace UDPTracker
         #endregion
 
         #region Socket Transmission
-        private static void DisconnectCallback(IAsyncResult ar)
-        {
-            DisconnectState arState = (DisconnectState)ar.AsyncState;
-
-            arState.m_socketObj.EndDisconnect(ar);
-            arState.m_disconnected = true;
-        }
         private static void ReceiveCallback(IAsyncResult ar)
         {
             ReceiveState state = (ReceiveState)ar.AsyncState;
@@ -259,7 +270,7 @@ namespace UDPTracker
             }
             catch(Exception ex)
             {
-                state.m_receivedFlag = true;
+                throw new UDPClientException("Error trying to get response from server", ex, UDPClientError.BadResponse);
             }
         }
 
@@ -271,7 +282,7 @@ namespace UDPTracker
             if (m_client.Connected == false)
                 return null;
 
-            byte[] response = new byte[6553500];
+            byte[] response = new byte[MAX_RESPONSE_SIZE];
             List<ArraySegment<byte>> recvBuffers = new List<ArraySegment<byte>>();
             for(int seg = 0; seg < 100; seg++)
             {
