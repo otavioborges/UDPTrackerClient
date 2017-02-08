@@ -15,18 +15,6 @@ namespace UDPTracker
         NONE = 0, COMPLETED = 1, STARTED = 2, STOPPED = 3
     }
 
-    class DisconnectState
-    {
-        public Socket m_socketObj;
-        public bool m_disconnected;
-
-        public DisconnectState(Socket socket)
-        {
-            m_socketObj = socket;
-            m_disconnected = false;
-        }
-    }
-
     class ReceiveState
     {
         public Socket m_socketObj;
@@ -39,7 +27,7 @@ namespace UDPTracker
         }
     }
 
-    public class UDPTrackerClient
+    public class UDPTrackerClient : IDisposable
     {
         private readonly long MAGIC_NUMBER = 0x41727101980;
         private readonly int MAX_RETRIES = 3;
@@ -53,6 +41,7 @@ namespace UDPTracker
         private bool m_connected;
         private DateTime m_connectionTime;
         private bool m_received;
+        private bool m_disposed;
 
         #region Constructors
         public UDPTrackerClient(string server, short port)
@@ -71,6 +60,31 @@ namespace UDPTracker
 
             m_randomGenerator = new Random((int)DateTime.Now.Ticks);
             m_connected = false;
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!m_disposed)
+            {
+                if (disposing)
+                {
+                    m_client.Dispose();
+                    m_connected = false;
+                }
+                m_randomGenerator = null;
+                m_disposed = true;
+            }
+        }
+
+        ~UDPTrackerClient()
+        {
+            Dispose(true);
         }
         #endregion
 
