@@ -15,6 +15,9 @@ namespace UDPTracker
         NONE = 0, COMPLETED = 1, STARTED = 2, STOPPED = 3
     }
 
+    /// <summary>
+    /// Class to keep necessary objects for async socket transmitions.
+    /// </summary>
     class ReceiveState
     {
         public Socket m_socketObj;
@@ -27,6 +30,9 @@ namespace UDPTracker
         }
     }
 
+    /// <summary>
+    /// A Client to connect, announce and scrape an UDP torrent tracker
+    /// </summary>
     public class UDPTrackerClient : IDisposable
     {
         private readonly int MAX_RESPONSE_SIZE = 6553500;
@@ -45,6 +51,11 @@ namespace UDPTracker
         private bool m_disposed;
 
         #region Constructors
+        /// <summary>
+        /// Creates an instance of the UDP Client
+        /// </summary>
+        /// <param name="server">IP address or domain of the server</param>
+        /// <param name="port">Server port for UDP transmitions</param>
         public UDPTrackerClient(string server, short port)
         {
             try
@@ -63,6 +74,9 @@ namespace UDPTracker
             m_connected = false;
         }
 
+        /// <summary>
+        /// Dispose and clean the object
+        /// </summary>
         public void Dispose()
         {
             Dispose(true);
@@ -90,6 +104,9 @@ namespace UDPTracker
         #endregion
 
         #region Public Methods
+        /// <summary>
+        /// Close the connection with the UDP server.
+        /// </summary>
         public void Close()
         {
             if (m_client.Connected)
@@ -106,6 +123,9 @@ namespace UDPTracker
             }
         }
 
+        /// <summary>
+        /// Perform an UDP transmition to connect with the server. Receiving a connecion_id to allow announce and scrape
+        /// </summary>
         public void Connect()
         {
             try
@@ -138,6 +158,12 @@ namespace UDPTracker
             m_connected = true;
         }
 
+        /// <summary>
+        /// Announce a defined torrent hash on the server, using <see cref="UDPTracker.AnnouceEvents"/> as NONE.
+        /// </summary>
+        /// <param name="infoHash">A 20 byte-length hash identifing the torrent</param>
+        /// <param name="peerID">20 byte-length ID to be used to identify this client</param>
+        /// <returns>List of <see cref="System.Net.IPEndPoint"/> of all available peers</returns>
         public List<IPEndPoint> Announce(byte[] infoHash, byte[] peerID)
         {
             List<IPEndPoint> peers = new List<IPEndPoint>();
@@ -180,7 +206,7 @@ namespace UDPTracker
             Append((int)AnnouceEvents.NONE, ref request, false);// event
             Append(0, ref request, false);                      // IP Address
             Append(announceKey, ref request, false);            // key
-            Append(50, ref request, true);                     // num_want (-1 for default)
+            Append(100, ref request, true);                     // num_want (-1 for default)
             Append((short)15000, ref request, false);           // client listening port
 
             byte[] response = Transmit(request.ToArray(), MAX_RESPONSE_SIZE);
@@ -213,6 +239,11 @@ namespace UDPTracker
             return peers;
         }
 
+        /// <summary>
+        /// Get total Leechers and Seeders for a torrent
+        /// </summary>
+        /// <param name="infoHash">A 20 byte-length hash identifing the torrent</param>
+        /// <returns>Total leechers and seeders informed by the tracker</returns>
         public int GetPeersForTorrent(byte[] infoHash)
         {
             int peers = -1;
@@ -255,6 +286,8 @@ namespace UDPTracker
 
             // catch the remaining EndPoints
             peers = BitConverter.ToInt32(ReverseChunk(response,8,4), 0);
+            peers += BitConverter.ToInt32(ReverseChunk(response, 16, 4), 0);
+
             return peers;
         }
         #endregion
