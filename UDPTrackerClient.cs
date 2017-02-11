@@ -144,7 +144,7 @@ namespace UDPTracker
             Append(0, ref request, false);
             Append(sendTransaction, ref request, false);
 
-            byte[] response = Transmit(request.ToArray(), 16);
+            byte[] response = Transmit(request.ToArray(), 16, false);
             if (response == null) // no response from request
                 throw new UDPClientException("No response from server on connect command", null, UDPClientError.BadServer, m_server, m_port);
 
@@ -209,7 +209,7 @@ namespace UDPTracker
             Append(100, ref request, true);                     // num_want (-1 for default)
             Append((short)15000, ref request, false);           // client listening port
 
-            byte[] response = Transmit(request.ToArray(), MAX_RESPONSE_SIZE);
+            byte[] response = Transmit(request.ToArray(), MAX_RESPONSE_SIZE, true);
 
             if (response == null) // no response from tracker
                 throw new UDPClientException("No response from server to Announce request", null, UDPClientError.ResponseTimeout, m_server, m_port);
@@ -276,7 +276,7 @@ namespace UDPTracker
             Append(sendTransaction, ref request, false);        // transaction_id
             Append(infoHash, ref request, false);               // torrent info_hash
 
-            byte[] response = Transmit(request.ToArray(), 20);
+            byte[] response = Transmit(request.ToArray(), 20, true);
             if (response == null) // no response from tracker
                 throw new UDPClientException("No response from server to Announce request", null, UDPClientError.ResponseTimeout, m_server, m_port);
 
@@ -303,11 +303,13 @@ namespace UDPTracker
             }
             catch(Exception ex)
             {
-                throw new UDPClientException("Error trying to get response from server", ex, UDPClientError.BadResponse);
+                state.m_receivedFlag = false;
+                return;
+                //throw new UDPClientException("Error trying to get response from server", ex, UDPClientError.BadResponse);
             }
         }
 
-        private byte[] Transmit(byte[] request, int responseSize)
+        private byte[] Transmit(byte[] request, int responseSize, bool doRetry)
         {
             ReceiveState state = new ReceiveState(m_client, m_received);
             int retry = 0;
@@ -340,9 +342,16 @@ namespace UDPTracker
                 m_received = state.m_receivedFlag;
 
                 if (m_received == false)
-                    retry++;
+                {
+                    if (doRetry)
+                        retry++;
+                    else
+                        break;
+                }
                 else
+                {
                     break;
+                }
             }
 
             m_received = false;
