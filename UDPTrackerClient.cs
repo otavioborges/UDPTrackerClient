@@ -123,6 +123,89 @@ namespace UDPTracker
             }
         }
 
+        public static KeyValuePair<string,Uri> GetPeerDetails(IPEndPoint peer, byte[] info_hash, byte[] peerID, out bool success)
+        {
+            KeyValuePair<string, Uri> rtnPair = new KeyValuePair<string, Uri>();
+
+            if (peerID.Length != 20)
+                throw new ArgumentException("Invalid size for peerID", "peerID");
+
+            if (info_hash.Length != 20)
+                throw new ArgumentException("Invalid size for info_hash", "info_hash");
+
+            Socket peerClient = new Socket(peer.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+
+            IAsyncResult result = null;
+            try
+            {
+                 result = peerClient.BeginConnect(peer, null, null);
+            }
+            catch
+            {
+                success = false;
+                return rtnPair;
+            }
+
+            bool connSuccess = result.AsyncWaitHandle.WaitOne(2000, true);
+
+            if (peerClient.Connected)
+            {
+                byte[] handshake = new byte[68];
+                handshake[0] = 0x13;
+                Array.Copy(System.Text.Encoding.ASCII.GetBytes("BitTorrent protocol"), 0, handshake, 1, 19);
+                Array.Copy(new byte[] { 0, 0, 0, 0, 0, 0, 0, 0 }, 0, handshake, 20, 8);
+                Array.Copy(info_hash, 0, handshake, 28, 20);
+                Array.Copy(peerID, 0, handshake, 48, 20);
+
+                peerClient.Send(handshake);
+                if (!peerClient.Connected)
+                {
+                    success = false;
+                    return rtnPair;
+                }
+
+                byte[] response = new byte[1024];
+                //peerClient.Receive(response.ToArray(), 0, 4, SocketFlags.Partial);
+                //uint msgSize = BitConverter.ToUInt32(response.ToArray(), 0);
+                //peerClient.Receive(response.ToArray(), 4, (int)msgSize, SocketFlags.None);
+                // discard first response
+                try
+                {
+                    int received = peerClient.Receive(response);
+                    if (received >= 68)
+                    {
+                        string returnedPeerID = System.Text.Encoding.ASCII.GetString(response, 48, 8); // get the client name version
+                        byte[] numericPart = new byte[12];
+                        Array.Copy(response, 8, numericPart, 0, 12);
+                        foreach (byte value in numericPart)
+                            returnedPeerID += value.ToString("D2");
+
+                        rtnPair = new KeyValuePair<string, Uri>(returnedPeerID, new Uri("tcp://" + peer.ToString() + "/"));
+                        success = true;
+                        return rtnPair;
+                    }
+                    else
+                    {
+                        peerClient.Close();
+                        success = false;
+                        return rtnPair;
+                    }
+                }
+                catch
+                {
+                    peerClient.Close();
+                    success = false;
+                    return rtnPair;
+                }
+            }
+            else
+            {
+                peerClient.Close();
+                success = false;
+                return rtnPair;
+            }
+        }
+
         /// <summary>
         /// Perform an UDP transmition to connect with the server. Receiving a connecion_id to allow announce and scrape
         /// </summary>
